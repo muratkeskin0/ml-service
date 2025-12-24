@@ -13,6 +13,7 @@ import os
 sys.path.append(os.path.join(os.path.dirname(__file__), 'services'))
 
 from text_analyzer.text_analyzer import TextAnalyzer
+from text_analyzer.ensemble_analyzer import EnsembleTextAnalyzer
 
 # FastAPI app oluştur
 app = FastAPI(
@@ -30,8 +31,21 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Model seçimi: ensemble veya tek model
+USE_ENSEMBLE = os.getenv("USE_ENSEMBLE", "true").lower() == "true"
+LOGISTIC_WEIGHT = float(os.getenv("LOGISTIC_WEIGHT", "0.3"))
+XLM_ROBERTA_WEIGHT = float(os.getenv("XLM_ROBERTA_WEIGHT", "0.7"))
+
 # TextAnalyzer instance oluştur
-text_analyzer = TextAnalyzer()
+if USE_ENSEMBLE:
+    print("[INFO] Ensemble mode aktif - Her iki model birlikte kullanılacak")
+    text_analyzer = EnsembleTextAnalyzer(
+        logistic_weight=LOGISTIC_WEIGHT,
+        xlm_roberta_weight=XLM_ROBERTA_WEIGHT
+    )
+else:
+    print("[INFO] Single model mode - Otomatik model seçimi")
+    text_analyzer = TextAnalyzer()
 
 
 # Request/Response Models
@@ -52,6 +66,7 @@ class TextAnalysisResponse(BaseModel):
     is_disaster_related: bool
     relevance_score: float
     message: str
+    ensemble_details: Optional[dict] = None  # Ensemble kullanılıyorsa detaylar
 
 
 # Endpoints
@@ -82,7 +97,14 @@ async def analyze_text(request: TextAnalysisRequest):
     """
     try:
         # Text'i analiz et
-        is_related, score = text_analyzer.classify_disaster_relevance(request.text)
+        if USE_ENSEMBLE and isinstance(text_analyzer, EnsembleTextAnalyzer):
+            # Ensemble mode
+            is_related, score, details = text_analyzer.classify_disaster_relevance(request.text)
+            ensemble_details = details
+        else:
+            # Single model mode
+            is_related, score = text_analyzer.classify_disaster_relevance(request.text)
+            ensemble_details = None
         
         # Message oluştur
         percentage = score * 100
@@ -94,7 +116,8 @@ async def analyze_text(request: TextAnalysisRequest):
         return TextAnalysisResponse(
             is_disaster_related=is_related,
             relevance_score=round(score, 2),
-            message=message
+            message=message,
+            ensemble_details=ensemble_details
         )
     except Exception as e:
         raise HTTPException(

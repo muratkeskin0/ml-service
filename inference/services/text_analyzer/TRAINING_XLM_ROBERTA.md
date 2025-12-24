@@ -227,3 +227,4 @@ huggingface-cli login
 | Inference Hızı | Çok Hızlı | Hızlı |
 | Model Boyutu | ~50 MB | ~500 MB |
 | GPU Gereksinimi | Hayır | Önerilir |
+

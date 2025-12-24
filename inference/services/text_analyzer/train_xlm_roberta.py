@@ -348,3 +348,4 @@ if __name__ == "__main__":
         num_epochs=3,
         use_gpu=USE_GPU
     )
+

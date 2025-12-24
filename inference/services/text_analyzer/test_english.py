@@ -1,44 +1,49 @@
 """
 Comprehensive English Test for Disaster Relevance Classification
 Sadece İngilizce metinlerle test yapar
+Hem Logistic Regression hem de XLM-RoBERTa modellerini destekler
 """
 import sys
 import codecs
 import json
-import pickle
 from pathlib import Path
 from typing import List, Tuple, Dict
-
-import numpy as np
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.linear_model import LogisticRegression
-
 
 # Windows için Unicode desteği
 if sys.platform == 'win32':
     sys.stdout = codecs.getwriter('utf-8')(sys.stdout.buffer, 'strict')
     sys.stderr = codecs.getwriter('utf-8')(sys.stderr.buffer, 'strict')
 
+# TextAnalyzer'ı import et
+from text_analyzer import TextAnalyzer
+from ensemble_analyzer import EnsembleTextAnalyzer
+
 
 class ModelTester:
-    """Model test sınıfı"""
+    """Model test sınıfı - TextAnalyzer veya EnsembleTextAnalyzer kullanarak"""
     
-    def __init__(self):
-        """Model ve vectorizer'ı yükle"""
+    def __init__(self, model_type: str = None, use_ensemble: bool = False):
+        """
+        Model yükle
+        
+        Args:
+            model_type: 'logistic' veya 'xlm_roberta' (None ise otomatik algılar)
+            use_ensemble: True ise ensemble kullanır (her iki modeli birlikte)
+        """
         models_dir = Path(__file__).parent / "models"
-        model_path = models_dir / "model.pkl"
-        vectorizer_path = models_dir / "vectorizer.pkl"
         
-        if not model_path.exists() or not vectorizer_path.exists():
-            raise FileNotFoundError("Model dosyalari bulunamadi! Once model egitimi yapin.")
-        
-        with open(model_path, 'rb') as f:
-            self.model = pickle.load(f)
-        
-        with open(vectorizer_path, 'rb') as f:
-            self.vectorizer = pickle.load(f)
-        
-        print("[OK] Model ve vectorizer yuklendi")
+        try:
+            if use_ensemble:
+                self.analyzer = EnsembleTextAnalyzer(model_path=str(models_dir))
+                print(f"[OK] Ensemble analyzer yuklendi (Logistic + XLM-RoBERTa)")
+                self.model_type = "ensemble"
+            else:
+                self.analyzer = TextAnalyzer(model_path=str(models_dir), model_type=model_type)
+                model_type_used = self.analyzer.model_type
+                print(f"[OK] Model yuklendi: {model_type_used.upper()}")
+                self.model_type = model_type_used
+        except Exception as e:
+            raise FileNotFoundError(f"Model yuklenemedi: {e}")
     
     def classify(self, text: str) -> Tuple[bool, float]:
         """
@@ -50,16 +55,11 @@ class ModelTester:
         if not text or len(text.strip()) == 0:
             return False, 0.0
         
-        # TF-IDF vectorization
-        text_vectorized = self.vectorizer.transform([text])
-        
-        # Prediction
-        prediction = self.model.predict(text_vectorized)[0]
-        probability = self.model.predict_proba(text_vectorized)[0]
-        
-        # Class 0: not_related, Class 1: disaster_related
-        is_related = bool(prediction == 1)
-        confidence = float(probability[1])  # Disaster related probability
+        # Ensemble veya single model kullanarak classification
+        if self.model_type == "ensemble":
+            is_related, confidence = self.analyzer.classify_disaster_relevance_simple(text)
+        else:
+            is_related, confidence = self.analyzer.classify_disaster_relevance(text)
         
         return is_related, confidence
 
@@ -346,15 +346,25 @@ def get_test_cases() -> Dict[str, List[Tuple[str, bool]]]:
     return test_cases
 
 
-def run_comprehensive_test():
-    """Kapsamlı test çalıştır"""
+def run_comprehensive_test(model_type: str = None, use_ensemble: bool = False):
+    """
+    Kapsamlı test çalıştır
+    
+    Args:
+        model_type: 'logistic' veya 'xlm_roberta' (None ise otomatik algılar)
+        use_ensemble: True ise ensemble kullanır (her iki modeli birlikte)
+    """
     print("="*70)
     print("COMPREHENSIVE ENGLISH TEST - DISASTER RELEVANCE CLASSIFICATION")
+    if use_ensemble:
+        print("Model Type: ENSEMBLE (Logistic Regression + XLM-RoBERTa)")
+    elif model_type:
+        print(f"Model Type: {model_type.upper()}")
     print("="*70)
     
     # Model yükle
     try:
-        tester = ModelTester()
+        tester = ModelTester(model_type=model_type, use_ensemble=use_ensemble)
     except Exception as e:
         print(f"[ERROR] Model yuklenemedi: {e}")
         return
@@ -451,5 +461,15 @@ def run_comprehensive_test():
 
 
 if __name__ == "__main__":
-    run_comprehensive_test()
+    import argparse
+    
+    parser = argparse.ArgumentParser(description='Test disaster relevance classification model')
+    parser.add_argument('--model-type', type=str, default=None, 
+                       choices=['logistic', 'xlm_roberta'],
+                       help='Model type to use (logistic or xlm_roberta). If not specified, auto-detects.')
+    parser.add_argument('--ensemble', action='store_true',
+                       help='Use ensemble mode (both Logistic Regression and XLM-RoBERTa together)')
+    args = parser.parse_args()
+    
+    run_comprehensive_test(model_type=args.model_type, use_ensemble=args.ensemble)
 

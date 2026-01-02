@@ -6,6 +6,17 @@ Hem Logistic Regression hem de XLM-RoBERTa modellerini destekler
 from typing import Tuple, Optional
 import pickle
 from pathlib import Path
+import numpy as np
+from scipy.sparse import hstack, csr_matrix
+
+try:
+    from .feature_extractor import FeatureExtractor
+except ImportError:
+    try:
+        from feature_extractor import FeatureExtractor
+    except ImportError:
+        # Fallback if feature_extractor not available
+        FeatureExtractor = None
 
 
 class TextAnalyzer:
@@ -34,8 +45,12 @@ class TextAnalyzer:
         # Model değişkenleri
         self.model = None
         self.vectorizer = None
+        self.char_vectorizer = None
+        self.feature_extractor = None
         self.tokenizer = None
         self.model_type = None
+        self.use_linguistic_features = False
+        self.use_character_ngrams = False
         
         # Model yolu belirleme
         if model_path:
@@ -56,6 +71,9 @@ class TextAnalyzer:
             self._load_xlm_roberta(model_dir)
         else:
             self._load_logistic_regression(model_dir)
+        
+        # Feature extractor yükleme (linguistic features için)
+        self._load_feature_extractor(model_dir)
     
     def _detect_model_type(self, model_dir: Path) -> str:
         """
@@ -104,7 +122,53 @@ class TextAnalyzer:
         with open(vectorizer_file, 'rb') as f:
             self.vectorizer = pickle.load(f)
         
+        # Character-level vectorizer yükleme (opsiyonel)
+        char_vectorizer_file = model_dir / "char_vectorizer.pkl"
+        if char_vectorizer_file.exists():
+            try:
+                with open(char_vectorizer_file, 'rb') as f:
+                    self.char_vectorizer = pickle.load(f)
+                self.use_character_ngrams = True
+                print(f"[OK] Character-level vectorizer yüklendi: {char_vectorizer_file}")
+            except Exception as e:
+                print(f"[WARNING] Character-level vectorizer yüklenemedi: {e}")
+                self.char_vectorizer = None
+                self.use_character_ngrams = False
+        else:
+            self.char_vectorizer = None
+            self.use_character_ngrams = False
+        
         print(f"[OK] Logistic Regression Model yüklendi: {model_dir}")
+    
+    def _load_feature_extractor(self, model_dir: Path):
+        """Feature extractor yükle (linguistic features için)"""
+        feature_extractor_file = model_dir / "feature_extractor.pkl"
+        
+        if feature_extractor_file.exists():
+            try:
+                with open(feature_extractor_file, 'rb') as f:
+                    self.feature_extractor = pickle.load(f)
+                self.use_linguistic_features = True
+                print(f"[OK] Feature Extractor yüklendi: {feature_extractor_file}")
+            except Exception as e:
+                print(f"[WARNING] Feature extractor yüklenemedi: {e}")
+                self.feature_extractor = None
+                self.use_linguistic_features = False
+        else:
+            # Try to create new feature extractor
+            if FeatureExtractor:
+                try:
+                    self.feature_extractor = FeatureExtractor()
+                    self.use_linguistic_features = True
+                    print(f"[INFO] Yeni Feature Extractor oluşturuldu")
+                except Exception as e:
+                    print(f"[WARNING] Feature extractor oluşturulamadı: {e}")
+                    self.feature_extractor = None
+                    self.use_linguistic_features = False
+            else:
+                print(f"[INFO] Feature extractor kullanılmayacak (linguistic features yok)")
+                self.feature_extractor = None
+                self.use_linguistic_features = False
     
     def _load_xlm_roberta(self, model_dir: Path):
         """XLM-RoBERTa model yükle"""
@@ -177,12 +241,37 @@ class TextAnalyzer:
         if not self.vectorizer:
             raise RuntimeError("Vectorizer yüklenmemiş!")
         
-        # TF-IDF vectorization
+        # TF-IDF vectorization (word-level)
         text_vectorized = self.vectorizer.transform([text])
         
+        # Character-level n-grams (if available)
+        if self.use_character_ngrams and self.char_vectorizer:
+            try:
+                text_char_vectorized = self.char_vectorizer.transform([text])
+                # Combine word-level and character-level
+                text_vectorized = hstack([text_vectorized, text_char_vectorized])
+            except Exception as e:
+                print(f"[WARNING] Character n-grams eklenemedi: {e}, sadece word-level kullanılıyor")
+        
+        # Linguistic features (if available)
+        if self.use_linguistic_features and self.feature_extractor:
+            try:
+                linguistic_features = self.feature_extractor.extract_linguistic_features(text)
+                feature_names = self.feature_extractor.get_feature_names()[:17]  # Only linguistic (17 features)
+                linguistic_array = np.array([[linguistic_features[key] for key in feature_names]])
+                linguistic_sparse = csr_matrix(linguistic_array)
+                
+                # Combine TF-IDF and linguistic features
+                combined_features = hstack([text_vectorized, linguistic_sparse])
+            except Exception as e:
+                print(f"[WARNING] Linguistic features eklenemedi: {e}, sadece TF-IDF kullanılıyor")
+                combined_features = text_vectorized
+        else:
+            combined_features = text_vectorized
+        
         # Prediction
-        prediction = self.model.predict(text_vectorized)[0]
-        probability = self.model.predict_proba(text_vectorized)[0]
+        prediction = self.model.predict(combined_features)[0]
+        probability = self.model.predict_proba(combined_features)[0]
         
         # Class 0: not_related, Class 1: disaster_related
         is_related = bool(prediction == 1)

@@ -1,0 +1,71 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# ML Models - DO NOT COMMIT (too large)
+# XLM-RoBERTa model files
+inference/services/text_analyzer/models/xlm_roberta/
+*.safetensors
+*.bin
+*.pt
+*.pth
+
+# Checkpoints
+**/checkpoint-*/
+
+# Model training files
+*.pkl
+*.h5
+*.ckpt
+
+# Data files
+*.csv
+*.json
+!**/accuracy_test_results*.json
+!**/model_metadata.json
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb
+
+# Environment
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+

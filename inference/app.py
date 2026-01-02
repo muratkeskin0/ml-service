@@ -8,6 +8,12 @@ from pydantic import BaseModel, Field
 from typing import Optional
 import sys
 import os
+import codecs
+
+# Windows için stdout/stderr UTF-8 ayarla (Turkce karakter hatalarını önlemek için)
+if sys.platform == "win32":
+    sys.stdout = codecs.getwriter("utf-8")(sys.stdout.buffer, "strict")
+    sys.stderr = codecs.getwriter("utf-8")(sys.stderr.buffer, "strict")
 
 # services klasörünü path'e ekle
 sys.path.append(os.path.join(os.path.dirname(__file__), 'services'))

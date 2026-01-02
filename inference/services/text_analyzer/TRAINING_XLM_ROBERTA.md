@@ -228,3 +228,6 @@ huggingface-cli login
 | Model Boyutu | ~50 MB | ~500 MB |
 | GPU Gereksinimi | Hayır | Önerilir |
 
+
+
+

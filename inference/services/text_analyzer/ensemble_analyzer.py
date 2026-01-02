@@ -5,7 +5,7 @@ daha güvenilir tahminler yapar
 """
 from typing import Tuple, Optional, Dict
 from pathlib import Path
-from text_analyzer import TextAnalyzer
+from text_analyzer.text_analyzer import TextAnalyzer
 
 
 class EnsembleTextAnalyzer:
@@ -166,5 +166,6 @@ class EnsembleTextAnalyzer:
         """
         is_related, score, _ = self.classify_disaster_relevance(text)
         return is_related, score
+
 
 

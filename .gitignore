@@ -36,11 +36,29 @@ inference/services/text_analyzer/models/xlm_roberta/
 *.h5
 *.ckpt
 
-# Data files
+# Explicit model files
+inference/services/text_analyzer/models/model.pkl
+inference/services/text_analyzer/models/vectorizer.pkl
+inference/services/text_analyzer/models/char_vectorizer.pkl
+inference/services/text_analyzer/models/feature_extractor.pkl
+
+# Data files - Large datasets should not be committed
 *.csv
 *.json
-!**/accuracy_test_results*.json
-!**/model_metadata.json
+
+# Exceptions: Keep these small JSON files
+!inference/services/text_analyzer/data/accuracy_test_results*.json
+!inference/services/text_analyzer/models/model_metadata.json
+
+# Large data files (explicit)
+inference/services/text_analyzer/data/disaster_related_dataset_en_100k.csv
+inference/services/text_analyzer/data/tweets.csv
+inference/services/text_analyzer/data/socialmedia-disaster-tweets-DFE.csv
+inference/services/text_analyzer/data/sample_prccd.csv
+inference/services/text_analyzer/data/turkish_dataset.csv
+inference/services/text_analyzer/data/unified_preprocessed_data.json
+inference/services/text_analyzer/data/CrisisLexT26/**/*.csv
+inference/services/text_analyzer/data/CrisisLexT26/**/*.json
 
 # Jupyter Notebook
 .ipynb_checkpoints
@@ -68,4 +86,38 @@ Thumbs.db
 
 # Logs
 *.log
+
+# FastText language detection models (large binary files)
+inference/services/language_detector/bin/
+inference/services/language_detector/models/*.bin
+inference/services/language_detector/models/*.ftz
+
+# Training outputs and temporary files
+*.tmp
+*.temp
+*.bak
+*.backup
+
+# Large preprocessed data
+**/unified_preprocessed_data.json
+**/preprocessed_*.json
+**/preprocessed_*.csv
+
+# Tokenizer files (large)
+*.bpe.model
+*.vocab
+*.merges.txt
+
+# Training checkpoints and logs
+**/checkpoint-*/
+**/logs/
+**/runs/
+**/wandb/
+**/tensorboard/
+
+# Model metadata (keep only essential)
+!inference/services/text_analyzer/models/model_metadata.json
+
+# Test results (keep only essential)
+!inference/services/text_analyzer/data/accuracy_test_results*.json
 

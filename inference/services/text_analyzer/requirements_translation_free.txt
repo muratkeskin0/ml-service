@@ -1,0 +1,11 @@
+# Free Translation Service Dependencies
+# Ücretsiz çeviri servisi için gerekli paketler
+
+# HuggingFace Transformers - Ücretsiz, offline çalışan translation modelleri
+transformers>=4.30.0
+torch>=2.0.0
+
+# Not: İlk kullanımda model indirilecek (~500 MB)
+# Model: Helsinki-NLP/opus-mt-tr-en (Türkçe → İngilizce)
+
+

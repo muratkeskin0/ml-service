@@ -59,8 +59,24 @@ def train_model():
     
     # Train-test split
     print(f"\n[3/5] Train-test split yapiliyor...")
+    # Veri kalitesi kontrolü: Çok kısa metinleri filtrele
+    min_length = 10  # Minimum karakter sayısı
+    filtered_texts = []
+    filtered_labels = []
+    filtered_sources = []
+    
+    for text, label, source in zip(texts, labels, sources):
+        if len(text.strip()) >= min_length:
+            filtered_texts.append(text)
+            filtered_labels.append(label)
+            filtered_sources.append(source)
+    
+    print(f"  - Filtreleme öncesi: {len(texts)} kayit")
+    print(f"  - Filtreleme sonrası: {len(filtered_texts)} kayit (min {min_length} karakter)")
+    
     X_train, X_test, y_train, y_test, sources_train, sources_test = train_test_split(
-        texts, labels, sources, test_size=0.2, random_state=42, stratify=labels
+        filtered_texts, filtered_labels, filtered_sources, 
+        test_size=0.2, random_state=42, stratify=filtered_labels
     )
     
     print(f"  - Train set: {len(X_train)} kayit")
@@ -160,9 +176,10 @@ def train_model():
     model = LogisticRegression(
         C=1.0,
         class_weight='balanced',  # Imbalanced data için
-        max_iter=1000,
+        max_iter=3000,  # Artırıldı (convergence için)
         random_state=42,
-        solver='lbfgs'
+        solver='lbfgs',
+        verbose=1  # Progress göster
     )
     
     model.fit(X_train_combined, y_train)

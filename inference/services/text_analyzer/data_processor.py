@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import List, Tuple
 import random
 import glob
+import os
 
 
 class DataProcessor:
@@ -208,9 +209,13 @@ class DataProcessor:
                     if len(cleaned_text) < 3:
                         continue
                     
-                    # Label: "Other Useful Information" veya disaster-related = 1, diğerleri = 0
-                    # PRCCD'de genelde disaster-related olanlar "Other Useful Information" label'ına sahip
-                    binary_label = 1 if 'useful' in label.lower() or 'information' in label.lower() else 0
+                    # Label mapping: PRCCD'de "Other Useful Information" = disaster related (1)
+                    # Diğer label'lar = not related (0)
+                    label_lower = label.lower()
+                    if 'useful' in label_lower and 'information' in label_lower:
+                        binary_label = 1
+                    else:
+                        binary_label = 0
                     
                     data.append((cleaned_text, binary_label, 'sample_prccd'))
                     count += 1
@@ -334,6 +339,230 @@ class DataProcessor:
         print(f"  [OK] {len(data)} kayit yuklendi")
         return data
     
+    def load_archive_tsv_files(self) -> List[Tuple[str, int, str]]:
+        """archive (1) klasöründeki TSV dosyalarını yükle"""
+        data = []
+        archive_dir = self.data_dir / "archive (1)"
+        
+        if not archive_dir.exists():
+            return data
+        
+        print("Archive TSV dosyalari yukleniyor...")
+        
+        # Tüm TSV dosyalarını bul
+        tsv_files = list(archive_dir.glob("*.tsv"))
+        
+        for tsv_file in tsv_files:
+            try:
+                with open(tsv_file, 'r', encoding='utf-8') as f:
+                    reader = csv.DictReader(f, delimiter='\t')
+                    count = 0
+                    for row in reader:
+                        text = row.get('tweet_text', '').strip()
+                        label = row.get('label', '').strip()
+                        
+                        if not text or len(text) < 3:
+                            continue
+                        
+                        cleaned_text = self.clean_text(text)
+                        if len(cleaned_text) < 3:
+                            continue
+                        
+                        # Label mapping: disaster-related = 1, not_related = 0
+                        # "other_useful_information", "injured_or_dead_people", "donation_needs_or_offers_or_volunteering_services" = 1
+                        # "not_related_or_irrelevant" = 0
+                        disaster_labels = ['other_useful_information', 'injured_or_dead_people', 
+                                          'donation_needs_or_offers_or_volunteering_services']
+                        binary_label = 1 if label.lower() in [l.lower() for l in disaster_labels] else 0
+                        
+                        event_name = tsv_file.stem.replace('_CF_labeled_data', '').replace('_cl_labeled_data', '').replace('_en_CF_labeled_data', '')
+                        data.append((cleaned_text, binary_label, f"archive_{event_name}"))
+                        count += 1
+                
+                print(f"  [OK] {tsv_file.name}: {count} kayit")
+            except Exception as e:
+                print(f"  [ERROR] {tsv_file.name} yuklenirken hata: {e}")
+        
+        print(f"  [OK] Toplam {len(data)} archive TSV kayit yuklendi")
+        return data
+    
+    def load_crisis_benchmarks(self) -> List[Tuple[str, int, str]]:
+        """crisis_datasets_benchmarks_v1.0 klasöründeki TSV dosyalarını yükle (sadece İngilizce)"""
+        data = []
+        benchmarks_dir = self.data_dir / "crisis_datasets_benchmarks_v1.0" / "data" / "all_data_en"
+        
+        if not benchmarks_dir.exists():
+            return data
+        
+        print("Crisis Benchmarks dataset yukleniyor...")
+        
+        # Tüm TSV dosyalarını bul
+        tsv_files = list(benchmarks_dir.glob("*.tsv"))
+        
+        for tsv_file in tsv_files:
+            try:
+                with open(tsv_file, 'r', encoding='utf-8') as f:
+                    reader = csv.DictReader(f, delimiter='\t')
+                    count = 0
+                    for row in reader:
+                        text = row.get('text', '').strip() if row.get('text') else ''
+                        lang = row.get('lang', '').strip().lower() if row.get('lang') else ''
+                        class_label = row.get('class_label', '').strip() if row.get('class_label') else ''
+                        
+                        # Sadece İngilizce
+                        if lang != 'en':
+                            continue
+                        
+                        if not text or len(text) < 3:
+                            continue
+                        
+                        cleaned_text = self.clean_text(text)
+                        if len(cleaned_text) < 3:
+                            continue
+                        
+                        # class_label'a göre binary label
+                        # Informativeness task: "informative" = 1, "not_informative" = 0
+                        # Humanitarian task: disaster-related categories = 1, "not_humanitarian" = 0
+                        class_label_lower = class_label.lower()
+                        if 'informative' in class_label_lower and 'not' not in class_label_lower:
+                            # Informativeness: informative = disaster related
+                            binary_label = 1
+                        elif 'not_informative' in class_label_lower or 'not_humanitarian' in class_label_lower:
+                            # Not informative/not humanitarian = not related
+                            binary_label = 0
+                        elif any(cat in class_label_lower for cat in ['affected', 'infrastructure', 'requests', 'displaced', 'rescue', 'injured', 'missing', 'caution', 'sympathy']):
+                            # Humanitarian categories = disaster related
+                            binary_label = 1
+                        else:
+                            # Default: not related
+                            binary_label = 0
+                        
+                        event = row.get('event', 'unknown')
+                        source = row.get('source', 'unknown')
+                        data.append((cleaned_text, binary_label, f"crisis_benchmarks_{event}_{source}"))
+                        count += 1
+                
+                print(f"  [OK] {tsv_file.name}: {count} kayit")
+            except Exception as e:
+                print(f"  [ERROR] {tsv_file.name} yuklenirken hata: {e}")
+        
+        print(f"  [OK] Toplam {len(data)} crisis benchmarks kayit yuklendi")
+        return data
+    
+    def load_humaid_dataset(self) -> List[Tuple[str, int, str]]:
+        """HumAID_data_events_set1_47K klasöründeki TSV dosyalarını yükle"""
+        data = []
+        humaid_dir = self.data_dir / "HumAID_data_events_set1_47K" / "events_set1"
+        
+        if not humaid_dir.exists():
+            return data
+        
+        print("HumAID dataset yukleniyor...")
+        
+        # Tüm event klasörlerini bul
+        event_dirs = [d for d in humaid_dir.iterdir() if d.is_dir()]
+        
+        for event_dir in event_dirs:
+            event_name = event_dir.name
+            # Train, dev, test dosyalarını yükle
+            for split in ['train', 'dev', 'test']:
+                tsv_file = event_dir / f"{event_name}_{split}.tsv"
+                
+                if not tsv_file.exists():
+                    continue
+                
+                try:
+                    with open(tsv_file, 'r', encoding='utf-8') as f:
+                        reader = csv.DictReader(f, delimiter='\t')
+                        count = 0
+                        for row in reader:
+                            text = row.get('tweet_text', '').strip()
+                            class_label = row.get('class_label', '').strip()
+                            
+                            if not text or len(text) < 3:
+                                continue
+                            
+                            cleaned_text = self.clean_text(text)
+                            if len(cleaned_text) < 3:
+                                continue
+                            
+                            # class_label mapping: disaster-related = 1, not_related = 0
+                            # HumAID humanitarian categories = disaster related
+                            disaster_labels = [
+                                'other_relevant_information', 
+                                'displaced_people_and_evacuations',
+                                'rescue_volunteering_or_donation_effort', 
+                                'injured_or_dead_people',
+                                'infrastructure_and_utility_damage', 
+                                'missing_or_found_people',
+                                'caution_and_advice',
+                                'sympathy_and_support',
+                                'affected_individual',
+                                'infrastructure_and_utilities_damage',
+                                'requests_or_needs'
+                            ]
+                            not_related_labels = ['not_humanitarian']
+                            
+                            class_label_lower = class_label.lower()
+                            if class_label_lower in [l.lower() for l in not_related_labels]:
+                                binary_label = 0
+                            elif class_label_lower in [l.lower() for l in disaster_labels]:
+                                binary_label = 1
+                            else:
+                                # Default: not related (güvenli tarafta)
+                                binary_label = 0
+                            
+                            data.append((cleaned_text, binary_label, f"humaid_{event_name}_{split}"))
+                            count += 1
+                    
+                    print(f"  [OK] {event_name}_{split}: {count} kayit")
+                except Exception as e:
+                    print(f"  [ERROR] {event_name}_{split} yuklenirken hata: {e}")
+        
+        print(f"  [OK] Toplam {len(data)} HumAID kayit yuklendi")
+        return data
+    
+    def load_crisis_csv(self) -> List[Tuple[str, int, str]]:
+        """archive (2)/crisis.csv dosyasını yükle"""
+        data = []
+        crisis_file = self.data_dir / "archive (2)" / "crisis.csv"
+        
+        if not crisis_file.exists():
+            return data
+        
+        print("Crisis CSV dataset yukleniyor...")
+        
+        try:
+            with open(crisis_file, 'r', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                count = 0
+                for row in reader:
+                    text = row.get('text', '').strip()
+                    relevance_label = row.get('relevance_label', '').strip()
+                    
+                    if not text or len(text) < 3:
+                        continue
+                    
+                    cleaned_text = self.clean_text(text)
+                    if len(cleaned_text) < 3:
+                        continue
+                    
+                    # relevance_label: "1" = disaster related, "0" = not related
+                    try:
+                        binary_label = int(relevance_label) if relevance_label else 0
+                    except ValueError:
+                        binary_label = 0
+                    
+                    crisis_type = row.get('crisis_type', 'unknown')
+                    data.append((cleaned_text, binary_label, f"crisis_csv_{crisis_type}"))
+                    count += 1
+            
+            print(f"  [OK] {len(data)} kayit yuklendi")
+        except Exception as e:
+            print(f"  [ERROR] Crisis CSV yuklenirken hata: {e}")
+        
+        return data
+    
     def process_all_datasets(self) -> Tuple[List[str], List[int], List[str]]:
         """
         Tüm datasetleri yükle ve birleştir
@@ -354,6 +583,10 @@ class DataProcessor:
             self.load_socialmedia_disaster_tweets,
             self.load_disaster_related_100k,
             self.load_hard_negatives,
+            self.load_archive_tsv_files,  # Yeni
+            self.load_crisis_benchmarks,  # Yeni
+            self.load_humaid_dataset,     # Yeni
+            self.load_crisis_csv,         # Yeni
         ]
         
         for load_func in datasets:

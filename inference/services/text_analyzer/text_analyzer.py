@@ -1,13 +1,17 @@
 """
 T1: Disaster Relevance Classification Service
 Reddit post'unun afet ile ilgili olup olmadığını tespit eder
-Hem Logistic Regression hem de XLM-RoBERTa modellerini destekler
+Logistic Regression modeli kullanır (TF-IDF + Linguistic Features + Character N-grams)
+Multi-language support: 100+ dil → İngilizce (HuggingFace MarianMT - ücretsiz)
 """
 from typing import Tuple, Optional
 import pickle
 from pathlib import Path
 import numpy as np
 from scipy.sparse import hstack, csr_matrix
+import logging
+
+logger = logging.getLogger(__name__)
 
 try:
     from .feature_extractor import FeatureExtractor
@@ -18,25 +22,39 @@ except ImportError:
         # Fallback if feature_extractor not available
         FeatureExtractor = None
 
+# Ücretsiz translation servisi (HuggingFace MarianMT)
+# Google API kullanılmıyor, tamamen ücretsiz ve offline çalışır
+try:
+    from .translation_service_free import FreeTranslationService
+    TRANSLATION_AVAILABLE = True
+except ImportError:
+    TRANSLATION_AVAILABLE = False
+    logger.warning("Ücretsiz translation servisi bulunamadı. Yüklemek için: pip install transformers torch")
+
 
 class TextAnalyzer:
     """
     T1: Disaster Relevance Classification için text analyzer
-    Otomatik olarak mevcut model tipini algılar:
-    - Logistic Regression (model.pkl + vectorizer.pkl)
-    - XLM-RoBERTa (Hugging Face format)
+    Logistic Regression modeli kullanır (TF-IDF + Linguistic Features + Character N-grams)
+    Ücretsiz multi-language translation: HuggingFace MarianMT (100+ dil → İngilizce)
+    Desteklenen diller: tr, es, fr, de, ar, ru, ja, ko, zh, hi, vb.
     """
     
-    def __init__(self, model_path: Optional[str] = None, model_type: Optional[str] = None):
+    def __init__(
+        self, 
+        model_path: Optional[str] = None, 
+        model_type: Optional[str] = None,
+        enable_translation: bool = True  # Varsayılan: Aktif (HuggingFace MarianMT - ücretsiz)
+    ):
         """
         Text analyzer başlat
         
         Args:
             model_path: Eğitilmiş model klasör yolu (opsiyonel)
                 - Logistic Regression: models/ klasörü
-                - XLM-RoBERTa: models/xlm_roberta/ klasörü
-            model_type: Model tipi ('logistic' veya 'xlm_roberta')
-                None ise otomatik algılar
+            enable_translation: Çeviri özelliğini aktif et
+                True ise HuggingFace MarianMT (ücretsiz) ile Türkçe metinler çevrilir
+                False ise sadece İngilizce metinler desteklenir
         
         Raises:
             FileNotFoundError: Model dosyaları bulunamazsa
@@ -47,10 +65,39 @@ class TextAnalyzer:
         self.vectorizer = None
         self.char_vectorizer = None
         self.feature_extractor = None
-        self.tokenizer = None
-        self.model_type = None
         self.use_linguistic_features = False
         self.use_character_ngrams = False
+        
+        # Language detection ve Free Translation (HuggingFace MarianMT)
+        # FastText modeli mevcut: services/language_detector/models/lid.176.bin
+        self.enable_translation = enable_translation
+        self.language_detector = None
+        self.translation_service = None
+        
+        # Language detector yükle
+        try:
+            from .language_detector import LanguageDetector
+            self.language_detector = LanguageDetector()
+            if self.language_detector.use_fasttext:
+                logger.info("FastText language detector aktif")
+            else:
+                logger.info("Basit heuristik language detector aktif (FastText yok)")
+        except Exception as e:
+            logger.warning(f"Language detector yüklenemedi: {e}")
+            self.language_detector = None
+        
+        # Free translation service yükle (HuggingFace MarianMT - tamamen ücretsiz)
+        if enable_translation:
+            try:
+                from .translation_service_free import FreeTranslationService
+                self.translation_service = FreeTranslationService()
+                logger.info("Ücretsiz translation servisi yüklendi (HuggingFace MarianMT)")
+            except Exception as e:
+                logger.warning(f"Translation servisi yüklenemedi: {e}. Çeviri özelliği devre dışı.")
+                logger.warning("Yüklemek için: pip install transformers torch")
+                self.translation_service = None
+        else:
+            logger.info("Translation servisi kapalı - sadece İngilizce metinler destekleniyor")
         
         # Model yolu belirleme
         if model_path:
@@ -60,50 +107,11 @@ class TextAnalyzer:
             current_file = Path(__file__)
             model_dir = current_file.parent / "models"
         
-        # Model tipini algıla veya belirtilen tipi kullan
-        if model_type:
-            self.model_type = model_type
-        else:
-            self.model_type = self._detect_model_type(model_dir)
-        
-        # Model yükleme
-        if self.model_type == 'xlm_roberta':
-            self._load_xlm_roberta(model_dir)
-        else:
-            self._load_logistic_regression(model_dir)
+        # Sadece Logistic Regression modeli yükle
+        self._load_logistic_regression(model_dir)
         
         # Feature extractor yükleme (linguistic features için)
         self._load_feature_extractor(model_dir)
-    
-    def _detect_model_type(self, model_dir: Path) -> str:
-        """
-        Model tipini otomatik algıla
-        
-        Args:
-            model_dir: Model klasörü
-            
-        Returns:
-            str: 'logistic' veya 'xlm_roberta'
-        """
-        # XLM-RoBERTa kontrolü (config.json ve pytorch_model.bin veya model.safetensors)
-        xlm_roberta_dir = model_dir / "xlm_roberta"
-        if xlm_roberta_dir.exists():
-            config_file = xlm_roberta_dir / "config.json"
-            model_file = xlm_roberta_dir / "pytorch_model.bin"
-            safetensors_file = xlm_roberta_dir / "model.safetensors"
-            
-            if config_file.exists() and (model_file.exists() or safetensors_file.exists()):
-                return 'xlm_roberta'
-        
-        # Alternatif: Direkt xlm_roberta klasörü
-        if (model_dir / "config.json").exists():
-            model_file = model_dir / "pytorch_model.bin"
-            safetensors_file = model_dir / "model.safetensors"
-            if model_file.exists() or safetensors_file.exists():
-                return 'xlm_roberta'
-        
-        # Logistic Regression kontrolü (varsayılan)
-        return 'logistic'
     
     def _load_logistic_regression(self, model_dir: Path):
         """Logistic Regression model yükle"""
@@ -170,41 +178,13 @@ class TextAnalyzer:
                 self.feature_extractor = None
                 self.use_linguistic_features = False
     
-    def _load_xlm_roberta(self, model_dir: Path):
-        """XLM-RoBERTa model yükle"""
-        try:
-            from transformers import AutoTokenizer, AutoModelForSequenceClassification
-        except ImportError:
-            raise ImportError(
-                "XLM-RoBERTa modeli için 'transformers' ve 'torch' paketleri gerekli! "
-                "pip install transformers torch"
-            )
-        
-        # Model yolu kontrolü
-        xlm_roberta_dir = model_dir / "xlm_roberta"
-        if xlm_roberta_dir.exists():
-            model_path = xlm_roberta_dir
-        elif (model_dir / "config.json").exists():
-            model_path = model_dir
-        else:
-            raise FileNotFoundError(
-                f"XLM-RoBERTa model dosyaları bulunamadı! "
-                f"Aranan: {xlm_roberta_dir} veya {model_dir}"
-            )
-        
-        try:
-            self.tokenizer = AutoTokenizer.from_pretrained(str(model_path))
-            self.model = AutoModelForSequenceClassification.from_pretrained(str(model_path))
-            self.model.eval()  # Evaluation mode
-            print(f"[OK] XLM-RoBERTa Model yüklendi: {model_path}")
-        except Exception as e:
-            raise RuntimeError(f"XLM-RoBERTa model yüklenirken hata: {e}")
-    
     def classify_disaster_relevance(self, text: str) -> Tuple[bool, float]:
         """
         T1: Disaster relevance classification
         
         Post'un afet ile ilgili olup olmadığını tespit eder.
+        Tüm diller (100+) otomatik olarak İngilizce'ye çevrilir (HuggingFace MarianMT - ücretsiz).
+        Desteklenen diller: tr, es, fr, de, ar, ru, ja, ko, zh, hi, vb.
         
         Args:
             text: Reddit post text (title + selftext birleştirilmiş)
@@ -223,10 +203,45 @@ class TextAnalyzer:
         if not self.model:
             raise RuntimeError("Model yüklenmemiş! Model dosyalarını kontrol edin.")
         
-        if self.model_type == 'xlm_roberta':
-            return self._classify_with_xlm_roberta(text)
+        # Metni sınıflandırma için hazırla (dil algılama ve çeviri)
+        text_to_classify = self._prepare_text_for_classification(text)
+        
+        # Sınıflandırma (Logistic Regression ile)
+        return self._classify_with_logistic_regression(text_to_classify)
+    
+    def _prepare_text_for_classification(self, text: str) -> str:
+        """
+        Metni sınıflandırma için hazırla (dil algılama ve çeviri)
+        
+        Args:
+            text: Orijinal metin
+
+        Returns:
+            str: Sınıflandırma için hazır metin (İngilizce'ye çevrilmiş veya orijinal)
+        
+        Not: Multi-language support - 100+ dil desteklenir
+            Tüm diller İngilizce'ye çevrilir (tr, es, fr, de, ar, ru, ja, ko, vb.)
+        """
+        # Dil algılama ve çeviri (eğer aktifse)
+        if self.enable_translation and self.language_detector and self.translation_service:
+            try:
+                # Dil algılama (176 dil desteği)
+                detected_lang = self.language_detector.detect(text)
+                
+                # İngilizce değilse çevir (multi-language model ile)
+                if detected_lang != 'en':
+                    translated = self.translation_service.translate_to_english(text, source_lang=detected_lang)
+                    logger.debug(f"{detected_lang.upper()} metin çevrildi: '{text[:50]}...' -> '{translated[:50]}...'")
+                    return translated
+                else:
+                    # Zaten İngilizce - çeviri yok
+                    return text
+            except Exception as e:
+                logger.warning(f"Çeviri hatası: {e}, orijinal metin kullanılıyor")
+                return text
         else:
-            return self._classify_with_logistic_regression(text)
+            # Translation kapalı - sadece orijinal metni kullan
+            return text
     
     def _classify_with_logistic_regression(self, text: str) -> Tuple[bool, float]:
         """
@@ -265,9 +280,20 @@ class TextAnalyzer:
                 combined_features = hstack([text_vectorized, linguistic_sparse])
             except Exception as e:
                 print(f"[WARNING] Linguistic features eklenemedi: {e}, sadece TF-IDF kullanılıyor")
-                combined_features = text_vectorized
+                # Model linguistic features bekliyorsa, sıfırlarla doldur
+                if self.model.n_features_in_ == text_vectorized.shape[1] + 17:
+                    # 17 sıfır feature ekle
+                    zeros = csr_matrix(np.zeros((1, 17)))
+                    combined_features = hstack([text_vectorized, zeros])
+                else:
+                    combined_features = text_vectorized
         else:
-            combined_features = text_vectorized
+            # Linguistic features yok ama model bekliyorsa, sıfırlarla doldur
+            if hasattr(self.model, 'n_features_in_') and self.model.n_features_in_ == text_vectorized.shape[1] + 17:
+                zeros = csr_matrix(np.zeros((1, 17)))
+                combined_features = hstack([text_vectorized, zeros])
+            else:
+                combined_features = text_vectorized
         
         # Prediction
         prediction = self.model.predict(combined_features)[0]
@@ -279,40 +305,3 @@ class TextAnalyzer:
         
         return is_related, confidence
     
-    def _classify_with_xlm_roberta(self, text: str) -> Tuple[bool, float]:
-        """
-        XLM-RoBERTa ile classification
-        
-        Args:
-            text: Analiz edilecek metin
-            
-        Returns:
-            Tuple[bool, float]: (is_disaster_related, relevance_score)
-        """
-        import torch
-        
-        if not self.tokenizer:
-            raise RuntimeError("Tokenizer yüklenmemiş!")
-        
-        # Tokenization
-        inputs = self.tokenizer(
-            text,
-            truncation=True,
-            padding='max_length',
-            max_length=512,
-            return_tensors='pt'
-        )
-        
-        # Prediction (no gradient needed)
-        with torch.no_grad():
-            outputs = self.model(**inputs)
-            logits = outputs.logits
-            probabilities = torch.softmax(logits, dim=-1)
-        
-        # Class 0: not_related, Class 1: disaster_related
-        prediction = torch.argmax(probabilities, dim=-1).item()
-        confidence = float(probabilities[0][1].item())  # Disaster related probability
-        
-        is_related = bool(prediction == 1)
-        
-        return is_related, confidence

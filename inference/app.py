@@ -5,7 +5,6 @@ FastAPI servisi - Reddit post'larının afet ile ilgili olup olmadığını anal
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from typing import Optional
 import sys
 import os
 import codecs
@@ -19,7 +18,6 @@ if sys.platform == "win32":
 sys.path.append(os.path.join(os.path.dirname(__file__), 'services'))
 
 from text_analyzer.text_analyzer import TextAnalyzer
-from text_analyzer.ensemble_analyzer import EnsembleTextAnalyzer
 
 # FastAPI app oluştur
 app = FastAPI(
@@ -37,21 +35,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Model seçimi: ensemble veya tek model
-USE_ENSEMBLE = os.getenv("USE_ENSEMBLE", "true").lower() == "true"
-LOGISTIC_WEIGHT = float(os.getenv("LOGISTIC_WEIGHT", "0.3"))
-XLM_ROBERTA_WEIGHT = float(os.getenv("XLM_ROBERTA_WEIGHT", "0.7"))
-
-# TextAnalyzer instance oluştur
-if USE_ENSEMBLE:
-    print("[INFO] Ensemble mode aktif - Her iki model birlikte kullanılacak")
-    text_analyzer = EnsembleTextAnalyzer(
-        logistic_weight=LOGISTIC_WEIGHT,
-        xlm_roberta_weight=XLM_ROBERTA_WEIGHT
-    )
-else:
-    print("[INFO] Single model mode - Otomatik model seçimi")
-    text_analyzer = TextAnalyzer()
+# TextAnalyzer instance oluştur (Logistic Regression + Ücretsiz Multi-Language Translation)
+print("[INFO] Logistic Regression modeli yükleniyor")
+print("[INFO] Ücretsiz multi-language translation aktif (100+ dil → İngilizce)")
+text_analyzer = TextAnalyzer(enable_translation=True)
 
 
 # Request/Response Models
@@ -72,7 +59,6 @@ class TextAnalysisResponse(BaseModel):
     is_disaster_related: bool
     relevance_score: float
     message: str
-    ensemble_details: Optional[dict] = None  # Ensemble kullanılıyorsa detaylar
 
 
 # Endpoints
@@ -102,15 +88,8 @@ async def analyze_text(request: TextAnalysisRequest):
         TextAnalysisResponse - is_disaster_related, relevance_score, message
     """
     try:
-        # Text'i analiz et
-        if USE_ENSEMBLE and isinstance(text_analyzer, EnsembleTextAnalyzer):
-            # Ensemble mode
-            is_related, score, details = text_analyzer.classify_disaster_relevance(request.text)
-            ensemble_details = details
-        else:
-            # Single model mode
-            is_related, score = text_analyzer.classify_disaster_relevance(request.text)
-            ensemble_details = None
+        # Text'i analiz et (Logistic Regression + Translate-and-Test)
+        is_related, score = text_analyzer.classify_disaster_relevance(request.text)
         
         # Message oluştur
         percentage = score * 100
@@ -122,8 +101,7 @@ async def analyze_text(request: TextAnalysisRequest):
         return TextAnalysisResponse(
             is_disaster_related=is_related,
             relevance_score=round(score, 2),
-            message=message,
-            ensemble_details=ensemble_details
+            message=message
         )
     except Exception as e:
         raise HTTPException(

@@ -1,10 +1,11 @@
 """
 T1: Disaster Relevance Classification Service
 Reddit post'unun afet ile ilgili olup olmadığını tespit eder
-Logistic Regression modeli kullanır (TF-IDF + Linguistic Features + Character N-grams)
+Dual-model: Logistic Regression (varsayılan) + RoBERTa (opsiyonel, use_roberta=True)
 Multi-language support: 100+ dil → İngilizce (HuggingFace MarianMT - ücretsiz)
 """
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Dict, Any
+import json
 import pickle
 from pathlib import Path
 import numpy as np
@@ -12,6 +13,15 @@ from scipy.sparse import hstack, csr_matrix
 import logging
 
 logger = logging.getLogger(__name__)
+
+# RoBERTa (lazy import - transformers/torch gerekir)
+ROBERTA_AVAILABLE = False
+try:
+    import torch
+    from transformers import AutoModelForSequenceClassification, AutoTokenizer
+    ROBERTA_AVAILABLE = True
+except ImportError:
+    pass
 
 try:
     from .feature_extractor import FeatureExtractor
@@ -35,10 +45,13 @@ except ImportError:
 class TextAnalyzer:
     """
     T1: Disaster Relevance Classification için text analyzer
-    Logistic Regression modeli kullanır (TF-IDF + Linguistic Features + Character N-grams)
+    Dual-model: Logistic Regression (hızlı) + RoBERTa (opsiyonel, daha yüksek doğruluk)
     Ücretsiz multi-language translation: HuggingFace MarianMT (100+ dil → İngilizce)
     Desteklenen diller: tr, es, fr, de, ar, ru, ja, ko, zh, hi, vb.
     """
+    
+    # RoBERTa model alt klasör adı
+    ROBERTA_SUBDIR = "roberta"
     
     def __init__(
         self, 
@@ -52,6 +65,7 @@ class TextAnalyzer:
         Args:
             model_path: Eğitilmiş model klasör yolu (opsiyonel)
                 - Logistic Regression: models/ klasörü
+                - RoBERTa: models/roberta/ (fine-tuned RoBERTaForSequenceClassification)
             enable_translation: Çeviri özelliğini aktif et
                 True ise HuggingFace MarianMT (ücretsiz) ile Türkçe metinler çevrilir
                 False ise sadece İngilizce metinler desteklenir
@@ -67,6 +81,12 @@ class TextAnalyzer:
         self.feature_extractor = None
         self.use_linguistic_features = False
         self.use_character_ngrams = False
+        
+        # RoBERTa (lazy load)
+        self._roberta_model = None
+        self._roberta_tokenizer = None
+        self._roberta_is_multitask = False
+        self._model_dir = None
         
         # Language detection ve Free Translation (HuggingFace MarianMT)
         # FastText modeli mevcut: services/language_detector/models/lid.176.bin
@@ -106,12 +126,20 @@ class TextAnalyzer:
             # Varsayılan model yolu: services/text_analyzer/models/
             current_file = Path(__file__)
             model_dir = current_file.parent / "models"
+        self._model_dir = model_dir
         
-        # Sadece Logistic Regression modeli yükle
+        # Logistic Regression modeli yükle
         self._load_logistic_regression(model_dir)
         
         # Feature extractor yükleme (linguistic features için)
         self._load_feature_extractor(model_dir)
+        
+        # RoBERTa: lazy load (models/roberta/ varsa ilk use_roberta=True'da yüklenecek)
+        roberta_dir = model_dir / self.ROBERTA_SUBDIR
+        if roberta_dir.exists() and (roberta_dir / "config.json").exists():
+            logger.info("RoBERTa model dizini mevcut (lazy load): %s", roberta_dir)
+        elif ROBERTA_AVAILABLE:
+            logger.info("RoBERTa model dizini yok; use_roberta istekleri Logistic Regression kullanacak.")
     
     def _load_logistic_regression(self, model_dir: Path):
         """Logistic Regression model yükle"""
@@ -178,36 +206,76 @@ class TextAnalyzer:
                 self.feature_extractor = None
                 self.use_linguistic_features = False
     
-    def classify_disaster_relevance(self, text: str) -> Tuple[bool, float]:
+    def _is_multitask_roberta(self) -> bool:
+        """models/roberta/ config'inde multitask var mı?"""
+        if self._model_dir is None:
+            return False
+        cfg = self._model_dir / self.ROBERTA_SUBDIR / "config.json"
+        if not cfg.exists():
+            return False
+        try:
+            with open(cfg, "r", encoding="utf-8") as f:
+                return json.load(f).get("multitask", False)
+        except Exception:
+            return False
+
+    def _load_roberta(self) -> bool:
+        """RoBERTa modelini lazy-load et. Multi-task (T1+T2) veya sadece T1."""
+        if self._roberta_model is not None and self._roberta_tokenizer is not None:
+            return True
+        if not ROBERTA_AVAILABLE or self._model_dir is None:
+            return False
+        roberta_dir = self._model_dir / self.ROBERTA_SUBDIR
+        if not roberta_dir.exists() or not (roberta_dir / "config.json").exists():
+            return False
+        try:
+            self._roberta_tokenizer = AutoTokenizer.from_pretrained(str(roberta_dir))
+            if self._is_multitask_roberta():
+                try:
+                    from .model_multitask_roberta import MultiTaskRobertaForClassification
+                except ImportError:
+                    from model_multitask_roberta import MultiTaskRobertaForClassification
+                self._roberta_model = MultiTaskRobertaForClassification(base_model_name="roberta-base")
+                state = torch.load(roberta_dir / "pytorch_model.bin", map_location="cpu")
+                self._roberta_model.load_state_dict(state, strict=True)
+                self._roberta_model.eval()
+                self._roberta_is_multitask = True
+                logger.info("RoBERTa multi-task (T1+T2) modeli yüklendi: %s", roberta_dir)
+            else:
+                self._roberta_model = AutoModelForSequenceClassification.from_pretrained(str(roberta_dir))
+                self._roberta_model.eval()
+                logger.info("RoBERTa modeli yüklendi: %s", roberta_dir)
+            return True
+        except Exception as e:
+            logger.warning("RoBERTa yüklenemedi: %s", e)
+            return False
+    
+    def classify_disaster_relevance(
+        self, text: str, use_roberta: bool = False, return_t2: bool = False
+    ) -> Tuple[bool, float, str, Optional[Dict[str, Any]]]:
         """
-        T1: Disaster relevance classification
+        T1: Disaster relevance classification. return_t2=True ve multi-task RoBERTa ise T2 de aynı forward'dan döner.
         
-        Post'un afet ile ilgili olup olmadığını tespit eder.
-        Tüm diller (100+) otomatik olarak İngilizce'ye çevrilir (HuggingFace MarianMT - ücretsiz).
-        Desteklenen diller: tr, es, fr, de, ar, ru, ja, ko, zh, hi, vb.
-        
-        Args:
-            text: Reddit post text (title + selftext birleştirilmiş)
-            
         Returns:
-            Tuple[bool, float]: (is_disaster_related, relevance_score)
-                - is_disaster_related: True/False
-                - relevance_score: 0.0 - 1.0 arası güven skoru
-                
-        Raises:
-            RuntimeError: Model yüklenmemişse
+            (is_disaster_related, relevance_score, model_used, t2_dict or None)
         """
         if not text or len(text.strip()) == 0:
-            return False, 0.0
+            return False, 0.0, "logistic_regression", None
         
         if not self.model:
             raise RuntimeError("Model yüklenmemiş! Model dosyalarını kontrol edin.")
         
-        # Metni sınıflandırma için hazırla (dil algılama ve çeviri)
         text_to_classify = self._prepare_text_for_classification(text)
-        
-        # Sınıflandırma (Logistic Regression ile)
-        return self._classify_with_logistic_regression(text_to_classify)
+        t2_result = None
+
+        if use_roberta and self._load_roberta():
+            if return_t2 and self._roberta_is_multitask:
+                is_related, score, t2_result = self._classify_with_roberta_multitask(text_to_classify)
+            else:
+                is_related, score = self._classify_with_roberta(text_to_classify)
+            return is_related, score, "roberta", t2_result
+        is_related, score = self._classify_with_logistic_regression(text_to_classify)
+        return is_related, score, "logistic_regression", None
     
     def _prepare_text_for_classification(self, text: str) -> str:
         """
@@ -242,6 +310,64 @@ class TextAnalyzer:
         else:
             # Translation kapalı - sadece orijinal metni kullan
             return text
+    
+    def _classify_with_roberta(self, text: str) -> Tuple[bool, float]:
+        """
+        RoBERTa (HuggingFace) ile binary classification.
+        Label 1 = disaster_related, Label 0 = not_related.
+        """
+        if self._roberta_model is None or self._roberta_tokenizer is None:
+            raise RuntimeError("RoBERTa modeli yüklenmemiş.")
+        max_length = 512
+        inputs = self._roberta_tokenizer(
+            text,
+            return_tensors="pt",
+            truncation=True,
+            max_length=max_length,
+            padding=True,
+        )
+        with torch.no_grad():
+            out = self._roberta_model(**inputs)
+            logits = out.logits if not self._roberta_is_multitask else out.logits[0]
+        probs = torch.softmax(logits, dim=1)
+        prob_disaster = float(probs[0][1].item())
+        return prob_disaster >= 0.5, prob_disaster
+
+    def _classify_with_roberta_multitask(self, text: str) -> Tuple[bool, float, Dict[str, Any]]:
+        """Multi-task RoBERTa: tek forward ile T1 + T2. (is_related, score, t2_dict) döner."""
+        if self._roberta_model is None or self._roberta_tokenizer is None:
+            raise RuntimeError("RoBERTa modeli yüklenmemiş.")
+        from .model_multitask_roberta import CATEGORY_NAMES
+        max_length = 512
+        inputs = self._roberta_tokenizer(
+            text,
+            return_tensors="pt",
+            truncation=True,
+            max_length=max_length,
+            padding=True,
+        )
+        with torch.no_grad():
+            out = self._roberta_model(**inputs)
+        logits_d, logits_h, logits_c = out.logits
+        probs_d = torch.softmax(logits_d, dim=1)
+        probs_h = torch.softmax(logits_h, dim=1)
+        probs_c = torch.softmax(logits_c, dim=1)
+        prob_disaster = float(probs_d[0][1].item())
+        is_related = prob_disaster >= 0.5
+        prob_help = float(probs_h[0][1].item())
+        is_help = prob_help >= 0.5
+        cat_probs = {CATEGORY_NAMES[i]: float(probs_c[0][i].item()) for i in range(len(CATEGORY_NAMES))}
+        threshold = 0.2
+        labels = [CATEGORY_NAMES[i] for i in range(len(CATEGORY_NAMES)) if cat_probs[CATEGORY_NAMES[i]] >= threshold]
+        if not labels:
+            labels = [CATEGORY_NAMES[probs_c[0].argmax().item()]]
+        t2_dict = {
+            "is_help_request": is_help,
+            "help_request_probability": round(prob_help, 4),
+            "humanitarian_labels": labels,
+            "category_probabilities": {k: round(v, 4) for k, v in cat_probs.items()},
+        }
+        return is_related, prob_disaster, t2_dict
     
     def _classify_with_logistic_regression(self, text: str) -> Tuple[bool, float]:
         """

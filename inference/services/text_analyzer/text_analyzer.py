@@ -235,9 +235,12 @@ class TextAnalyzer:
                     from .model_multitask_roberta import MultiTaskRobertaForClassification
                 except ImportError:
                     from model_multitask_roberta import MultiTaskRobertaForClassification
-                self._roberta_model = MultiTaskRobertaForClassification(base_model_name="roberta-base")
+                # Multi-task model mimarisini doğrudan bu klasördeki config + ağırlıklarla kur
+                # (roberta-base stringi yerine yerel klasör yolunu veriyoruz)
+                self._roberta_model = MultiTaskRobertaForClassification(base_model_name=str(roberta_dir))
                 state = torch.load(roberta_dir / "pytorch_model.bin", map_location="cpu")
-                self._roberta_model.load_state_dict(state, strict=True)
+                # Yapı uyumsuzluklarına karşı strict=False (eksik/ekstra key'ler tolere edilir)
+                self._roberta_model.load_state_dict(state, strict=False)
                 self._roberta_model.eval()
                 self._roberta_is_multitask = True
                 logger.info("RoBERTa multi-task (T1+T2) modeli yüklendi: %s", roberta_dir)

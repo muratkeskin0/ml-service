@@ -71,13 +71,14 @@ def _download_hf_file(repo_id: str, filename: str, destination: Path) -> None:
 def ensure_logistic_regression_models(
     model_dir: Optional[Path] = None,
     repo_id: Optional[str] = None,
-) -> None:
-    """Download Logistic Regression artifacts if they are missing locally."""
+    required: bool = True,
+) -> bool:
+    """Download Logistic Regression artifacts if missing. Returns True if LR is ready."""
     model_dir = model_dir or default_text_analyzer_models_dir()
     repo_id = repo_id or get_hf_repo_id()
     missing_required = _missing_files(model_dir, LOGISTIC_REGRESSION_REQUIRED)
     if not missing_required:
-        return
+        return True
 
     logger.info(
         "Logistic Regression model files missing in %s — downloading from %s",
@@ -98,16 +99,30 @@ def ensure_logistic_regression_models(
             else:
                 logger.debug("Optional file not on Hub: %s (%s)", filename, exc)
 
+    if not _missing_files(model_dir, LOGISTIC_REGRESSION_REQUIRED):
+        return True
+
+    if not required:
+        logger.info("Logistic Regression weights unavailable; RoBERTa-only mode may be used")
+        return False
+
     still_missing = _missing_files(model_dir, LOGISTIC_REGRESSION_REQUIRED)
-    if still_missing:
-        setup_hint = (
-            "See SETUP.md: create a free Hugging Face account, upload model.pkl and "
-            "vectorizer.pkl to the Hub repo, then run: python scripts/download_models.py"
-        )
-        detail = "; ".join(errors) if errors else ", ".join(still_missing)
-        raise FileNotFoundError(
-            f"Required model files not found: {', '.join(still_missing)}. {detail}. {setup_hint}"
-        )
+    setup_hint = (
+        "See SETUP.md or run: python scripts/download_models.py --roberta"
+    )
+    detail = "; ".join(errors) if errors else ", ".join(still_missing)
+    raise FileNotFoundError(
+        f"Required model files not found: {', '.join(still_missing)}. {detail}. {setup_hint}"
+    )
+
+
+def roberta_weights_available(model_dir: Optional[Path] = None) -> bool:
+    model_dir = model_dir or default_text_analyzer_models_dir()
+    roberta_dir = model_dir / "roberta"
+    return (roberta_dir / "config.json").exists() and (
+        (roberta_dir / "pytorch_model.bin").exists()
+        or (roberta_dir / "model.safetensors").exists()
+    )
 
 
 def ensure_fasttext_model(models_dir: Optional[Path] = None) -> Optional[Path]:
@@ -165,9 +180,12 @@ def ensure_roberta_models(
     return (roberta_dir / "config.json").exists()
 
 
-def ensure_all_models(include_roberta: bool = False) -> None:
-    """Download everything needed for a fresh clone."""
-    ensure_logistic_regression_models()
+def ensure_all_models(include_roberta: bool = True) -> None:
+    """Download assets for a fresh clone (RoBERTa-first when LR weights are absent)."""
+    lr_ready = ensure_logistic_regression_models(required=False)
     ensure_fasttext_model()
-    if include_roberta:
-        ensure_roberta_models()
+    roberta_ready = ensure_roberta_models()
+    if not lr_ready and not roberta_ready:
+        raise FileNotFoundError(
+            "No inference weights found. Run: python scripts/download_models.py --roberta"
+        )

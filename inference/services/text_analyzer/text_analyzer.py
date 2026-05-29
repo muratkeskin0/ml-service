@@ -87,8 +87,7 @@ class TextAnalyzer:
         self._roberta_tokenizer = None
         self._roberta_is_multitask = False
         self._model_dir = None
-        
-        # Language detection ve Free Translation (HuggingFace MarianMT)
+        self.primary_model = "logistic_regression"
         # FastText modeli mevcut: services/language_detector/models/lid.176.bin
         self.enable_translation = enable_translation
         self.language_detector = None
@@ -127,31 +126,69 @@ class TextAnalyzer:
             current_file = Path(__file__)
             model_dir = current_file.parent / "models"
         self._model_dir = model_dir
-        
-        # Logistic Regression modeli yükle
-        self._load_logistic_regression(model_dir)
-        
-        # Feature extractor yükleme (linguistic features için)
-        self._load_feature_extractor(model_dir)
-        
-        # RoBERTa: lazy load (models/roberta/ varsa ilk use_roberta=True'da yüklenecek)
-        roberta_dir = model_dir / self.ROBERTA_SUBDIR
-        if roberta_dir.exists() and (roberta_dir / "config.json").exists():
-            logger.info("RoBERTa model dizini mevcut (lazy load): %s", roberta_dir)
-        elif ROBERTA_AVAILABLE:
-            logger.info("RoBERTa model dizini yok; use_roberta istekleri Logistic Regression kullanacak.")
+
+        try:
+            from ..model_assets import (
+                ensure_logistic_regression_models,
+                ensure_roberta_models,
+                roberta_weights_available,
+            )
+        except ImportError:
+            from model_assets import (
+                ensure_logistic_regression_models,
+                ensure_roberta_models,
+                roberta_weights_available,
+            )
+
+        lr_ready = ensure_logistic_regression_models(model_dir, required=False)
+        if not roberta_weights_available(model_dir):
+            ensure_roberta_models(model_dir)
+
+        if lr_ready:
+            self._load_logistic_regression(model_dir)
+            self._load_feature_extractor(model_dir)
+        else:
+            self._load_optional_lr_artifacts(model_dir)
+            logger.info("Logistic Regression weights not found")
+
+        if self._load_roberta():
+            if not self.model:
+                self.primary_model = "roberta"
+                print("[OK] RoBERTa-only mode (Logistic Regression not available)")
+            else:
+                print(f"[OK] RoBERTa ready (lazy): {model_dir / self.ROBERTA_SUBDIR}")
+        elif not self.model:
+            raise FileNotFoundError(
+                "No inference model available. Run: python scripts/download_models.py --roberta"
+            )
     
+    def _load_optional_lr_artifacts(self, model_dir: Path):
+        """Load optional LR helper files when main LR weights are absent."""
+        char_vectorizer_file = model_dir / "char_vectorizer.pkl"
+        if char_vectorizer_file.exists():
+            try:
+                with open(char_vectorizer_file, 'rb') as f:
+                    self.char_vectorizer = pickle.load(f)
+                self.use_character_ngrams = True
+            except Exception as e:
+                logger.warning("Character vectorizer yüklenemedi: %s", e)
+
+        feature_extractor_file = model_dir / "feature_extractor.pkl"
+        if feature_extractor_file.exists():
+            try:
+                with open(feature_extractor_file, 'rb') as f:
+                    self.feature_extractor = pickle.load(f)
+                self.use_linguistic_features = True
+            except Exception as e:
+                logger.warning("Feature extractor yüklenemedi: %s", e)
+
     def _load_logistic_regression(self, model_dir: Path):
         """Logistic Regression model yükle"""
-        try:
-            from ..model_assets import ensure_logistic_regression_models
-        except ImportError:
-            from model_assets import ensure_logistic_regression_models
-
-        ensure_logistic_regression_models(model_dir)
-
         model_file = model_dir / "model.pkl"
         vectorizer_file = model_dir / "vectorizer.pkl"
+
+        if not model_file.exists() or not vectorizer_file.exists():
+            return False
         
         with open(model_file, 'rb') as f:
             self.model = pickle.load(f)
@@ -176,11 +213,12 @@ class TextAnalyzer:
             self.use_character_ngrams = False
         
         print(f"[OK] Logistic Regression Model yüklendi: {model_dir}")
-    
+        return True
+
     def _load_feature_extractor(self, model_dir: Path):
         """Feature extractor yükle (linguistic features için)"""
         feature_extractor_file = model_dir / "feature_extractor.pkl"
-        
+
         if feature_extractor_file.exists():
             try:
                 with open(feature_extractor_file, 'rb') as f:
@@ -191,22 +229,19 @@ class TextAnalyzer:
                 print(f"[WARNING] Feature extractor yüklenemedi: {e}")
                 self.feature_extractor = None
                 self.use_linguistic_features = False
-        else:
-            # Try to create new feature extractor
-            if FeatureExtractor:
-                try:
-                    self.feature_extractor = FeatureExtractor()
-                    self.use_linguistic_features = True
-                    print(f"[INFO] Yeni Feature Extractor oluşturuldu")
-                except Exception as e:
-                    print(f"[WARNING] Feature extractor oluşturulamadı: {e}")
-                    self.feature_extractor = None
-                    self.use_linguistic_features = False
-            else:
-                print(f"[INFO] Feature extractor kullanılmayacak (linguistic features yok)")
+        elif FeatureExtractor:
+            try:
+                self.feature_extractor = FeatureExtractor()
+                self.use_linguistic_features = True
+                print("[INFO] Yeni Feature Extractor oluşturuldu")
+            except Exception as e:
+                print(f"[WARNING] Feature extractor oluşturulamadı: {e}")
                 self.feature_extractor = None
                 self.use_linguistic_features = False
-    
+        else:
+            self.feature_extractor = None
+            self.use_linguistic_features = False
+
     def _is_multitask_roberta(self) -> bool:
         """models/roberta/ config'inde multitask var mı?"""
         if self._model_dir is None:
@@ -264,22 +299,24 @@ class TextAnalyzer:
             (is_disaster_related, relevance_score, model_used, t2_dict or None)
         """
         if not text or len(text.strip()) == 0:
-            return False, 0.0, "logistic_regression", None
-        
-        if not self.model:
-            raise RuntimeError("Model yüklenmemiş! Model dosyalarını kontrol edin.")
-        
+            return False, 0.0, self.primary_model, None
+
         text_to_classify = self._prepare_text_for_classification(text)
         t2_result = None
+        use_roberta_effective = use_roberta or self.primary_model == "roberta"
 
-        if use_roberta and self._load_roberta():
+        if use_roberta_effective and self._load_roberta():
             if return_t2 and self._roberta_is_multitask:
                 is_related, score, t2_result = self._classify_with_roberta_multitask(text_to_classify)
             else:
                 is_related, score = self._classify_with_roberta(text_to_classify)
             return is_related, score, "roberta", t2_result
-        is_related, score = self._classify_with_logistic_regression(text_to_classify)
-        return is_related, score, "logistic_regression", None
+
+        if self.model:
+            is_related, score = self._classify_with_logistic_regression(text_to_classify)
+            return is_related, score, "logistic_regression", None
+
+        raise RuntimeError("No inference model loaded.")
     
     def _prepare_text_for_classification(self, text: str) -> str:
         """

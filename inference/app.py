@@ -37,10 +37,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# TextAnalyzer instance oluştur (Logistic Regression + Ücretsiz Multi-Language Translation)
-print("[INFO] Logistic Regression modeli yükleniyor")
+# TextAnalyzer instance oluştur (RoBERTa veya Logistic Regression + çeviri)
+print("[INFO] ML modelleri yükleniyor...")
 print("[INFO] Ücretsiz multi-language translation aktif (100+ dil → İngilizce)")
 text_analyzer = TextAnalyzer(enable_translation=True)
+print(f"[INFO] Aktif sınıflandırıcı: {text_analyzer.primary_model}")
 
 
 # Request/Response Models
@@ -55,6 +56,7 @@ class HealthResponse(BaseModel):
     status: str
     service: str
     task: str
+    primary_model: str = Field(..., description="roberta veya logistic_regression")
 
 
 class TextAnalysisResponse(BaseModel):
@@ -120,7 +122,8 @@ async def health_check():
     return HealthResponse(
         status="ok",
         service="ml-service-t1",
-        task="Disaster Relevance Classification"
+        task="Disaster Relevance Classification",
+        primary_model=text_analyzer.primary_model,
     )
 
 

@@ -53,11 +53,15 @@ class LanguageDetector:
             current_file = Path(__file__)
             # services/text_analyzer/language_detector.py -> services/language_detector/models/
             services_dir = current_file.parent.parent
-            model_file = services_dir / "language_detector" / "models" / "lid.176.bin"
-            
-            # Alternatif: lid.176.ftz (quantized, daha küçük)
+            models_dir = services_dir / "language_detector" / "models"
+            try:
+                from ..model_assets import ensure_fasttext_model
+            except ImportError:
+                from model_assets import ensure_fasttext_model
+            ensure_fasttext_model(models_dir)
+            model_file = models_dir / "lid.176.bin"
             if not model_file.exists():
-                model_file = services_dir / "language_detector" / "models" / "lid.176.ftz"
+                model_file = models_dir / "lid.176.ftz"
         
         # FastText model yükleme
         if FASTTEXT_AVAILABLE and model_file.exists():

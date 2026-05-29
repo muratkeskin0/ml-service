@@ -143,14 +143,15 @@ class TextAnalyzer:
     
     def _load_logistic_regression(self, model_dir: Path):
         """Logistic Regression model yükle"""
+        try:
+            from ..model_assets import ensure_logistic_regression_models
+        except ImportError:
+            from model_assets import ensure_logistic_regression_models
+
+        ensure_logistic_regression_models(model_dir)
+
         model_file = model_dir / "model.pkl"
         vectorizer_file = model_dir / "vectorizer.pkl"
-        
-        if not model_file.exists() or not vectorizer_file.exists():
-            raise FileNotFoundError(
-                f"Logistic Regression model dosyaları bulunamadı! "
-                f"Model: {model_file}, Vectorizer: {vectorizer_file}"
-            )
         
         with open(model_file, 'rb') as f:
             self.model = pickle.load(f)

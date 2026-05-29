@@ -56,7 +56,7 @@ python scripts/download_models.py
 
 | Dosya | Kaynak | Zorunlu |
 |-------|--------|---------|
-| `model.pkl`, `vectorizer.pkl` | [Hugging Face Hub](https://huggingface.co/muratkeskin0/smart-disaster-hub-ml) | Evet |
+| `model.pkl`, `vectorizer.pkl` | [Hugging Face Hub](https://huggingface.co/MuratKeskin0/smart-disaster-hub-ml) | Evet |
 | `char_vectorizer.pkl`, `feature_extractor.pkl` | Hugging Face Hub | Hayır |
 | `lid.176.ftz` (FastText) | Meta CDN (otomatik) | Hayır* |
 
@@ -138,7 +138,7 @@ Meta CDN (ücretsiz)       → FastText dil modeli
 Hugging Face (runtime)    → MarianMT çeviri modeli (ilk çeviri isteğinde indirilir)
 ```
 
-Varsayılan model reposu: **`muratkeskin0/smart-disaster-hub-ml`**
+Varsayılan model reposu: **`MuratKeskin0/smart-disaster-hub-ml`**
 
 Farklı bir repo kullanmak için:
 
@@ -202,5 +202,5 @@ Daha fazla detay: [SETUP.md](./SETUP.md)
 ## Lisans ve bağlantılar
 
 - **GitHub:** [muratkeskin0/ml-service](https://github.com/muratkeskin0/ml-service)
-- **Model weights:** [muratkeskin0/smart-disaster-hub-ml](https://huggingface.co/muratkeskin0/smart-disaster-hub-ml)
+- **Model weights:** [MuratKeskin0/smart-disaster-hub-ml](https://huggingface.co/MuratKeskin0/smart-disaster-hub-ml)
 - **Ana proje:** Smart Disaster Hub (Spring Boot + Angular + ML Service)

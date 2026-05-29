@@ -21,7 +21,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_MODELS_DIR = ROOT / "inference" / "services" / "text_analyzer" / "models"
-DEFAULT_REPO = "muratkeskin0/smart-disaster-hub-ml"
+DEFAULT_REPO = "MuratKeskin0/smart-disaster-hub-ml"
 
 LOGISTIC_FILES = (
     "model.pkl",

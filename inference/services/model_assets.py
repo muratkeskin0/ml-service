@@ -3,7 +3,7 @@ Model asset helpers: download inference weights from Hugging Face Hub (free, pub
 and FastText LID from Meta's official CDN.
 
 Environment:
-  ML_MODELS_HF_REPO  Hugging Face model repo id (default: muratkeskin0/smart-disaster-hub-ml)
+  ML_MODELS_HF_REPO  Hugging Face model repo id (default: MuratKeskin0/smart-disaster-hub-ml)
 """
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from typing import Iterable, Optional
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_HF_REPO = "muratkeskin0/smart-disaster-hub-ml"
+DEFAULT_HF_REPO = "MuratKeskin0/smart-disaster-hub-ml"
 FASTTEXT_LID_FTZ_URL = "https://dl.fbaipublicfiles.com/fasttext/supervised-models/lid.176.ftz"
 
 LOGISTIC_REGRESSION_FILES = (

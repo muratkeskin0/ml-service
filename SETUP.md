@@ -38,10 +38,10 @@ huggingface-cli login
 python scripts/upload_models_to_hf.py
 ```
 
-Varsayılan repo: `muratkeskin0/smart-disaster-hub-ml`  
+Varsayılan repo: `MuratKeskin0/smart-disaster-hub-ml`  
 Farklı isim için: `python scripts/upload_models_to_hf.py --repo KULLANICI_ADIN/repo-adi`
 
-Hub'da public repo oluşur: `https://huggingface.co/muratkeskin0/smart-disaster-hub-ml`
+Hub'da public repo oluşur: `https://huggingface.co/MuratKeskin0/smart-disaster-hub-ml`
 
 ## 3. Başkasının (veya yeni makinenin) kurulumu
 
@@ -80,7 +80,7 @@ RoBERTa ağırlıkları Hub'da yoksa servis yine de Logistic Regression ile çal
 
 | Değişken | Açıklama |
 |----------|----------|
-| `ML_MODELS_HF_REPO` | Model repo id (varsayılan: `muratkeskin0/smart-disaster-hub-ml`) |
+| `ML_MODELS_HF_REPO` | Model repo id (varsayılan: `MuratKeskin0/smart-disaster-hub-ml`) |
 
 ## 6. Sorun giderme
 

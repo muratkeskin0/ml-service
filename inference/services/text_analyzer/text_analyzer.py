@@ -69,6 +69,19 @@ DISASTER_KEYWORD_PATTERNS = [
     r"\bwe\s+need\s+help\b",
 ]
 
+FIGURATIVE_PATTERNS = [
+    r"\bsanki\b",
+    r"\bgibi\b",
+    r"\badeta\b",
+    r"\bresmen\b",
+    r"gözyaş.*sel",
+    r"gozyas.*sel",
+    r"göz\s*yaş.*sel",
+    r"etkisi yaratt",
+    r"\bmecaz",
+    r"metafor",
+]
+
 
 class TextAnalyzer:
     """
@@ -353,6 +366,10 @@ class TextAnalyzer:
         if not original_text or not original_text.strip():
             return is_related, score
 
+        if self._is_likely_figurative(original_text):
+            logger.debug("Skipping disaster keyword boost for likely figurative text")
+            return is_related, score
+
         hits = 0
         for pattern in DISASTER_KEYWORD_PATTERNS:
             if re.search(pattern, original_text, re.IGNORECASE):
@@ -370,6 +387,14 @@ class TextAnalyzer:
                 hits, score, boosted_score, is_related, boosted_related
             )
         return boosted_related, boosted_score
+
+    def _is_likely_figurative(self, text: str) -> bool:
+        if not text or not text.strip():
+            return False
+        for pattern in FIGURATIVE_PATTERNS:
+            if re.search(pattern, text, re.IGNORECASE):
+                return True
+        return False
     
     def _prepare_text_for_classification(self, text: str) -> str:
         """

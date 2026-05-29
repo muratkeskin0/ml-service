@@ -50,6 +50,14 @@ inference/services/text_analyzer/models/feature_extractor.pkl
 !inference/services/text_analyzer/data/accuracy_test_results*.json
 !inference/services/text_analyzer/models/model_metadata.json
 
+# Training datasets and archives (local only)
+inference/services/text_analyzer/data/
+inference/services/text_analyzer/data_processor.zip
+**/crisis_datasets_benchmarks_v1.0/
+**/HumAID_data_events_set1_47K/
+**/CrisisLexT26/
+**/archive*/
+
 # Large data files (explicit)
 inference/services/text_analyzer/data/disaster_related_dataset_en_100k.csv
 inference/services/text_analyzer/data/tweets.csv

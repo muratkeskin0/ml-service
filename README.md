@@ -54,11 +54,11 @@ python scripts/download_models.py
 
 İndirilenler:
 
-| Dosya | Kaynak | Zorunlu |
-|-------|--------|---------|
-| `model.pkl`, `vectorizer.pkl` | [Hugging Face Hub](https://huggingface.co/MuratKeskin0/smart-disaster-hub-ml) | Evet |
-| `char_vectorizer.pkl`, `feature_extractor.pkl` | Hugging Face Hub | Hayır |
-| `lid.176.ftz` (FastText) | Meta CDN (otomatik) | Hayır* |
+| Dosya | Hub'da | Zorunlu (LR modu) |
+|-------|--------|-------------------|
+| `model.pkl`, `vectorizer.pkl` | Hayır | Evet |
+| `char_vectorizer.pkl`, `feature_extractor.pkl`, `model_metadata.json` | Evet | Hayır |
+| `roberta/` (ağırlıklar dahil) | Evet | Hayır (`use_roberta=true`) |
 
 \* FastText yoksa basit heuristik dil algılama kullanılır.
 

@@ -24,6 +24,7 @@ LOGISTIC_REGRESSION_FILES = (
     "vectorizer.pkl",
     "char_vectorizer.pkl",
     "feature_extractor.pkl",
+    "model_metadata.json",
 )
 LOGISTIC_REGRESSION_REQUIRED = ("model.pkl", "vectorizer.pkl")
 

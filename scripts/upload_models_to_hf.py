@@ -2,16 +2,11 @@
 """
 Upload local model files to a free public Hugging Face model repo.
 
-Usage:
-  huggingface-cli login
-  python scripts/upload_models_to_hf.py --models-dir path/to/models
+Uploads every file that exists locally; missing files are skipped.
 
-Expected layout in --models-dir (or auto-detected from inference/):
-  model.pkl
-  vectorizer.pkl
-  char_vectorizer.pkl          (optional)
-  feature_extractor.pkl        (optional)
-  roberta/                     (optional HuggingFace folder)
+Usage:
+  hf auth login
+  python scripts/upload_models_to_hf.py --models-dir path/to/models
 """
 from __future__ import annotations
 
@@ -28,6 +23,7 @@ LOGISTIC_FILES = (
     "vectorizer.pkl",
     "char_vectorizer.pkl",
     "feature_extractor.pkl",
+    "model_metadata.json",
 )
 
 
@@ -41,15 +37,6 @@ def main() -> int:
     models_dir: Path = args.models_dir
     if not models_dir.exists():
         print(f"ERROR: models directory not found: {models_dir}", file=sys.stderr)
-        return 1
-
-    missing = [name for name in ("model.pkl", "vectorizer.pkl") if not (models_dir / name).exists()]
-    if missing:
-        print(
-            f"ERROR: required files missing in {models_dir}: {', '.join(missing)}\n"
-            "Copy your trained model.pkl and vectorizer.pkl there first.",
-            file=sys.stderr,
-        )
         return 1
 
     try:
@@ -66,6 +53,7 @@ def main() -> int:
         private=args.private,
     )
 
+    uploaded = 0
     for name in LOGISTIC_FILES:
         path = models_dir / name
         if path.exists():
@@ -76,9 +64,12 @@ def main() -> int:
                 repo_id=args.repo,
                 repo_type="model",
             )
+            uploaded += 1
+        else:
+            print(f"Skipping {name} (not found locally)")
 
     roberta_dir = models_dir / "roberta"
-    if roberta_dir.is_dir() and (roberta_dir / "config.json").exists():
+    if roberta_dir.is_dir() and any(roberta_dir.iterdir()):
         print("Uploading roberta/ folder ...")
         api.upload_folder(
             folder_path=str(roberta_dir),
@@ -86,9 +77,13 @@ def main() -> int:
             repo_id=args.repo,
             repo_type="model",
         )
+        uploaded += 1
 
-    print(f"\nDone. Public repo: https://huggingface.co/{args.repo}")
-    print("Others can run: python scripts/download_models.py")
+    if uploaded == 0:
+        print("ERROR: no model files found to upload.", file=sys.stderr)
+        return 1
+
+    print(f"\nDone ({uploaded} item(s)). Repo: https://huggingface.co/{args.repo}")
     return 0
 
 

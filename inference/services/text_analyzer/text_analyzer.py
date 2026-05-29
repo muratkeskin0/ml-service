@@ -7,6 +7,7 @@ Multi-language support: 100+ dil → İngilizce (HuggingFace MarianMT - ücretsi
 from typing import Tuple, Optional, Dict, Any
 import json
 import pickle
+import re
 from pathlib import Path
 import numpy as np
 from scipy.sparse import hstack, csr_matrix
@@ -40,6 +41,33 @@ try:
 except ImportError:
     TRANSLATION_AVAILABLE = False
     logger.warning("Ücretsiz translation servisi bulunamadı. Yüklemek için: pip install transformers torch")
+
+# Obvious disaster/help cues — boosts low ML scores for clear humanitarian posts.
+DISASTER_KEYWORD_PATTERNS = [
+    r"\bflood(?:ing|ed|s)?\b",
+    r"\bearthquake\b",
+    r"\bdeprem\b",
+    r"\bsel\b",
+    r"\byang[ıi]n\b",
+    r"\bfire\b",
+    r"\bwildfire\b",
+    r"\btsunami\b",
+    r"\bhurricane\b",
+    r"\btornado\b",
+    r"\bstorm\b",
+    r"\blandslide\b",
+    r"\bavalanche\b",
+    r"\bdisaster\b",
+    r"\bemergency\b",
+    r"\bafet\b",
+    r"\byard[ıi]m\b",
+    r"\bhelp\b",
+    r"\brescue\b",
+    r"\bevacuat",
+    r"\bneed\s+help\b",
+    r"\bplease\s+help\b",
+    r"\bwe\s+need\s+help\b",
+]
 
 
 class TextAnalyzer:
@@ -310,13 +338,38 @@ class TextAnalyzer:
                 is_related, score, t2_result = self._classify_with_roberta_multitask(text_to_classify)
             else:
                 is_related, score = self._classify_with_roberta(text_to_classify)
+            is_related, score = self._apply_disaster_keyword_boost(text, is_related, score)
             return is_related, score, "roberta", t2_result
 
         if self.model:
             is_related, score = self._classify_with_logistic_regression(text_to_classify)
+            is_related, score = self._apply_disaster_keyword_boost(text, is_related, score)
             return is_related, score, "logistic_regression", None
 
         raise RuntimeError("No inference model loaded.")
+
+    def _apply_disaster_keyword_boost(self, original_text: str, is_related: bool, score: float) -> Tuple[bool, float]:
+        """Raise score when obvious disaster/help terms appear in the original post text."""
+        if not original_text or not original_text.strip():
+            return is_related, score
+
+        hits = 0
+        for pattern in DISASTER_KEYWORD_PATTERNS:
+            if re.search(pattern, original_text, re.IGNORECASE):
+                hits += 1
+
+        if hits == 0:
+            return is_related, score
+
+        boost = min(0.40, 0.12 * hits)
+        boosted_score = min(1.0, score + boost)
+        boosted_related = boosted_score >= 0.5
+        if boosted_related != is_related or abs(boosted_score - score) > 0.01:
+            logger.debug(
+                "Disaster keyword boost applied: hits=%s score %.3f -> %.3f related=%s -> %s",
+                hits, score, boosted_score, is_related, boosted_related
+            )
+        return boosted_related, boosted_score
     
     def _prepare_text_for_classification(self, text: str) -> str:
         """
